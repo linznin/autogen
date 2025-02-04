@@ -1,4 +1,5 @@
 import asyncio
+import os
 import logging
 from _collections_abc import AsyncIterator
 from asyncio import Future, Task
@@ -9,6 +10,7 @@ from autogen_core._runtime_impl_helpers import SubscriptionManager
 
 from ._constants import GRPC_IMPORT_ERROR_STR
 from ._utils import subscription_from_proto
+from .event_store.redis import RedisEventStore
 
 try:
     import grpc
@@ -37,6 +39,15 @@ async def get_client_id_or_abort(context: grpc.aio.ServicerContext[Any, Any]) ->
 
     return client_id  # type: ignore
 
+def get_send_queue(client_id):
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        import redis
+        return RedisEventStore(
+            redis_instance=redis.from_url(redis_url),
+            client_id=client_id
+        )
+    return asyncio.Queue()
 
 class GrpcWorkerAgentRuntimeHostServicer(agent_worker_pb2_grpc.AgentRpcServicer):
     """A gRPC servicer that hosts message delivery service for agents."""
@@ -58,7 +69,7 @@ class GrpcWorkerAgentRuntimeHostServicer(agent_worker_pb2_grpc.AgentRpcServicer)
         client_id = await get_client_id_or_abort(context)
 
         # Register the client with the server and create a send queue for the client.
-        send_queue: asyncio.Queue[agent_worker_pb2.Message] = asyncio.Queue()
+        send_queue: asyncio.Queue[agent_worker_pb2.Message] = get_send_queue(client_id)
         self._send_queues[client_id] = send_queue
         logger.info(f"Client {client_id} connected.")
 
